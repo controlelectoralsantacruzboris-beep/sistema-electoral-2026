@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Mapa Electoral SCZ</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/wicket/1.3.7/wicket.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/wicket/1.3.7/wicket-leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<style>
+body { margin:0; display:flex; font-family:Arial; overflow:hidden; }
+#map { width:75%; height:100vh; }
+
+#dashboard {
+width:25%;
+background:#1e1e1e;
+color:white;
+padding:15px;
+display:flex;
+flex-direction:column;
+overflow:hidden;
+}
+
+#rankingRecintos{
+max-height:300px;
+overflow-y:auto;
+margin-top:10px;
+border-top:1px solid #444;
+padding-top:10px;
+}
+
+.ranking-item{
+font-size:13px;
+margin-bottom:4px;
+}
+
+#controls{
+position:absolute;
+top:10px;
+left:50%;
+transform:translateX(-50%);
+z-index:1000;
+background:white;
+padding:12px;
+border-radius:8px;
+box-shadow:0 0 10px rgba(0,0,0,0.3);
+width:320px;
+text-align:center;
+}
+
+#autocomplete-list{
+position:absolute;
+background:white;
+border:1px solid #ccc;
+max-height:200px;
+overflow-y:auto;
+width:100%;
+z-index:2000;
+}
+
+.autocomplete-item{
+padding:6px;
+cursor:pointer;
+}
+.autocomplete-item:hover{
+background:#f0f0f0;
+}
+
+#firma{
+margin-top:8px;
+font-weight:bold;
+}
+</style>
+</head>
+<body>
+
+<div id="controls">
+
+<input type="file" id="jsonInput"><br>
+<input type="file" id="excelInput"><br><br>
+
+<select id="filtro">
+<option value="Habilitados2026">Habilitados2026</option>
+<option value="CON2021">CON2021</option>
+<option value="Dip20251V">Dip20251V</option>
+<option value="20252V">20252V</option>
+</select><br><br>
+
+<input type="text" id="buscarRecinto" placeholder="Buscar recinto...">
+<div id="autocomplete-list"></div>
+
+<div id="firma"></div>
+
+</div>
+
+<div id="map"></div>
+
+<div id="dashboard">
+<h3>📊 Dashboard Electoral</h3>
+
+<b>Total Recintos:</b>
+<div id="totalRecintos">0</div>
+
+<b>Total Habilitados 2026:</b>
+<div id="totalHabilitados">0</div>
+
+<hr>
+
+<b>🏆 Ranking Recintos</b>
+<div id="rankingRecintos"></div>
+
+</div>
+
+<script>
+
+var map=L.map('map').setView([-17.7833,-63.1821],12);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+var layerUV=L.layerGroup().addTo(map);
+var layerRecintos=L.layerGroup().addTo(map);
+
+var recintos=[];
+var nombresRecintos=[];
+
+// =====================
+// COLORES
+// =====================
+function colorDistrito(numero){
+let colores=[
+"#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd",
+"#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf",
+"#8B0000","#006400","#00008B","#FF8C00","#4B0082"
+];
+return colores[(numero-1) % colores.length];
+}
+
+function colorPartido(p){
+if(!p) return "#999";
+p=p.toUpperCase();
+if(p.includes("UNIDAD")) return "#FFD700";
+if(p.includes("NULO")) return "#0000FF";
+if(p.includes("PDC")) return "#008000";
+if(p.includes("LIBRE")) return "#FF0000";
+if(p.includes("MAS")) return "#0033CC";
+if(p.includes("C-A")) return "#FF8000";
+if(p.includes("UCS")) return "#00BFFF";
+if(p.includes("DEMOCRATAS")) return "#006400";
+return "#999";
+}
+
+function extraerNumeroDistrito(texto){
+if(!texto) return null;
+let match = texto.toString().match(/\d+/);
+return match ? parseInt(match[0]) : null;
+}
+
+function colorUV(p){
+if(p<=500) return "#ffe5e5";
+if(p<=3500) return "#ff9999";
+if(p<=7000) return "#ff4d4d";
+if(p<=12000) return "#cc0000";
+return "#660000";
+}
+
+// =====================
+// CARGAR UV JSON
+// =====================
+document.getElementById("jsonInput").addEventListener("change",function(e){
+
+layerUV.clearLayers();
+
+let reader=new FileReader();
+reader.onload=function(evt){
+
+let data=JSON.parse(evt.target.result);
+
+data.forEach(item=>{
+if(!item.WKT) return;
+
+let wicket=new Wkt.Wkt();
+wicket.read(item.WKT);
+
+let poblacion=parseInt(item.poblacion)||0;
+let distritoNum=extraerNumeroDistrito(item.distrito);
+
+// 🔥 CAMBIO AQUÍ: zona ahora se muestra como UV
+let nombreUV = item.zona || "UV sin nombre";
+
+let poly=wicket.toObject({
+color:distritoNum?colorDistrito(distritoNum):"#000",
+weight:2,
+fillColor:colorUV(poblacion),
+fillOpacity:0.75
+});
+
+poly.bindPopup(`
+<b>🗺 UV: ${nombreUV}</b><br><br>
+🏘 Distrito: ${item.distrito || "-"}<br>
+👥 Habitantes: ${poblacion.toLocaleString()}
+`);
+
+poly.addTo(layerUV);
+});
+
+document.getElementById("jsonInput").style.display="none";
+
+};
+reader.readAsText(e.target.files[0]);
+});
+
+// =====================
+// CARGAR EXCEL
+// =====================
+document.getElementById("excelInput").addEventListener("change",function(e){
+
+layerRecintos.clearLayers();
+recintos=[];
+nombresRecintos=[];
+
+let reader=new FileReader();
+reader.onload=function(evt){
+
+let data=new Uint8Array(evt.target.result);
+let wb=XLSX.read(data,{type:'array'});
+let sheet=wb.Sheets[wb.SheetNames[0]];
+let json=XLSX.utils.sheet_to_json(sheet);
+
+json.forEach(row=>{
+
+if(!row.Latitud||!row.Longitud) return;
+
+let hab=Number(row.Habilitados2026)||0;
+let radio=Math.max(5, Math.sqrt(hab)/3);
+
+let distritoNum = extraerNumeroDistrito(row.Distrito);
+let color = distritoNum ? colorDistrito(distritoNum) : "#FFD700";
+
+let marker=L.circleMarker(
+[row.Latitud,row.Longitud],
+{
+radius:radio,
+fillColor:color,
+color:color,
+fillOpacity:0.9
+}
+).addTo(layerRecintos);
+
+marker.datos=row;
+
+marker.bindPopup(`
+<b>📍 ${row.Recinto}</b><br><br>
+🏘 Distrito: ${row.Distrito || "-"}<br>
+👔 Jefes de Recinto: ${row.JefesdeRecinto || 0}<br>
+🗳 Mesas 2026: ${row["Cantidad Mesas 2026"] || 0}<br>
+👥 Habilitados 2026: ${hab.toLocaleString()}<br><br>
+🏆 Ganadores:<br>
+• 2021: ${row.CON2021 || "-"}<br>
+• Dip2025: ${row.Dip20251V || "-"}<br>
+• 2025: ${row["20252V"] || "-"}
+`);
+
+recintos.push(marker);
+nombresRecintos.push(row.Recinto);
+
+});
+
+actualizarDashboard();
+
+document.getElementById("excelInput").style.display="none";
+document.getElementById("firma").innerHTML="INFORMACION BORIS RAMIREZ";
+
+};
+reader.readAsArrayBuffer(e.target.files[0]);
+});
+
+// =====================
+// DASHBOARD
+// =====================
+function actualizarDashboard(){
+
+let totalRec=recintos.length;
+let totalHab=0;
+let ranking=[];
+
+recintos.forEach(m=>{
+let hab=Number(m.datos.Habilitados2026)||0;
+totalHab+=hab;
+ranking.push({nombre:m.datos.Recinto,habilitados:hab});
+});
+
+document.getElementById("totalRecintos").innerHTML=totalRec;
+document.getElementById("totalHabilitados").innerHTML=totalHab.toLocaleString();
+
+ranking.sort((a,b)=>b.habilitados-a.habilitados);
+
+let html="";
+ranking.forEach(r=>{
+html+=`<div class="ranking-item">
+${r.nombre} - ${r.habilitados.toLocaleString()}
+</div>`;
+});
+
+document.getElementById("rankingRecintos").innerHTML=html;
+}
+
+// =====================
+// FILTRO
+// =====================
+document.getElementById("filtro").addEventListener("change",function(){
+
+let col=this.value;
+
+recintos.forEach(m=>{
+if(col==="Habilitados2026"){
+
+let distritoNum = extraerNumeroDistrito(m.datos.Distrito);
+let color = distritoNum ? colorDistrito(distritoNum) : "#FFD700";
+
+m.setStyle({fillColor:color,color:color});
+
+}else{
+let color=colorPartido(m.datos[col]);
+m.setStyle({fillColor:color,color:color});
+}
+});
+
+});
+
+</script>
+</body>
+</html>
